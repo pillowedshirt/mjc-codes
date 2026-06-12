@@ -867,12 +867,6 @@ JS;
         $selected_id = isset($stills[$selected_index]) ? $stills[$selected_index] : 0;
         $selected_image = $selected_id ? wp_get_attachment_image_url($selected_id, 'large') : '';
 
-        $previous_still = $selected <= 1 ? count($stills) : $selected - 1;
-        $next_still = $selected >= count($stills) ? 1 : $selected + 1;
-
-        $previous_url = add_query_arg('still', $previous_still, get_permalink($film_id));
-        $next_url = add_query_arg('still', $next_still, get_permalink($film_id));
-
         echo '<main class="mjc-film-detail-page">';
 
         echo '<a class="mjc-film-back-button" href="' . esc_url($plugin->get_work_page_url()) . '" aria-label="Back to Work page"><span class="mjc-film-back-arrow">&#8592;</span><span class="mjc-film-back-text">More Films</span></a>';
@@ -882,25 +876,41 @@ JS;
         echo '<section class="mjc-film-detail-media">';
 
         if ($selected_image) {
-            echo '<div class="mjc-film-detail-image-wrap">';
-            echo '<img src="' . esc_url($selected_image) . '" alt="' . esc_attr(get_the_title($film_id)) . ' still">';
+            $carousel_data = [];
 
-            if (count($stills) > 1) {
-                echo '<a class="mjc-film-arrow mjc-film-arrow-left" href="' . esc_url($previous_url) . '" aria-label="Previous still"><span>&#10094;</span></a>';
-                echo '<a class="mjc-film-arrow mjc-film-arrow-right" href="' . esc_url($next_url) . '" aria-label="Next still"><span>&#10095;</span></a>';
+            foreach ($stills as $index => $still_id) {
+                $large_url = wp_get_attachment_image_url($still_id, 'large');
+
+                if (!$large_url) {
+                    continue;
+                }
+
+                $carousel_data[] = [
+                    'index' => $index,
+                    'number' => $index + 1,
+                    'image' => $large_url,
+                    'url' => add_query_arg('still', $index + 1, get_permalink($film_id)),
+                ];
             }
 
+            echo '<div class="mjc-film-detail-image-wrap" data-mjc-film-carousel data-current="' . esc_attr($selected_index) . '">';
+            echo '<img class="mjc-film-carousel-image" src="' . esc_url($selected_image) . '" alt="' . esc_attr(get_the_title($film_id)) . ' still" data-film-title="' . esc_attr(get_the_title($film_id)) . '">';
+
+            if (count($carousel_data) > 1) {
+                echo '<button class="mjc-film-arrow mjc-film-arrow-left" type="button" data-carousel-direction="-1" aria-label="Previous still"><span>&#10094;</span></button>';
+                echo '<button class="mjc-film-arrow mjc-film-arrow-right" type="button" data-carousel-direction="1" aria-label="Next still"><span>&#10095;</span></button>';
+            }
+
+            echo '<script type="application/json" class="mjc-film-carousel-data">' . wp_json_encode($carousel_data) . '</script>';
             echo '</div>';
 
-            if (count($stills) > 1) {
+            if (count($carousel_data) > 1) {
                 echo '<nav class="mjc-film-dots" aria-label="Film still carousel position">';
 
-                foreach ($stills as $index => $still_id) {
-                    $dot_number = $index + 1;
-                    $dot_url = add_query_arg('still', $dot_number, get_permalink($film_id));
-                    $active = $dot_number === $selected;
+                foreach ($carousel_data as $item) {
+                    $active = (int) $item['index'] === (int) $selected_index;
 
-                    echo '<a class="mjc-film-dot ' . ($active ? 'is-active' : '') . '" href="' . esc_url($dot_url) . '" aria-label="View still ' . esc_attr($dot_number) . ' of ' . esc_attr(count($stills)) . '" ' . ($active ? 'aria-current="true"' : '') . '></a>';
+                    echo '<button class="mjc-film-dot ' . ($active ? 'is-active' : '') . '" type="button" data-carousel-index="' . esc_attr($item['index']) . '" aria-label="View still ' . esc_attr($item['number']) . ' of ' . esc_attr(count($carousel_data)) . '" ' . ($active ? 'aria-current="true"' : '') . '></button>';
                 }
 
                 echo '</nav>';
@@ -1458,7 +1468,108 @@ JS;
                     text-align: left;
                 }
             }
+
+            .mjc-film-arrow {
+                cursor: pointer;
+            }
+
+            .mjc-film-dot {
+                cursor: pointer;
+                appearance: none;
+                -webkit-appearance: none;
+                padding: 0;
+            }
+
+            .mjc-film-carousel-image {
+                transition: opacity .18s ease;
+            }
+
+            .mjc-film-carousel-image.is-changing {
+                opacity: .55;
+            }
         </style>
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                document.querySelectorAll('[data-mjc-film-carousel]').forEach(function (carousel) {
+                    const image = carousel.querySelector('.mjc-film-carousel-image');
+                    const dataNode = carousel.querySelector('.mjc-film-carousel-data');
+                    const detailPage = carousel.closest('.mjc-film-detail-page');
+
+                    if (!image || !dataNode || !detailPage) {
+                        return;
+                    }
+
+                    let items = [];
+
+                    try {
+                        items = JSON.parse(dataNode.textContent || '[]');
+                    } catch (error) {
+                        items = [];
+                    }
+
+                    if (!items.length) {
+                        return;
+                    }
+
+                    const dots = Array.from(detailPage.querySelectorAll('.mjc-film-dot'));
+                    const arrows = Array.from(detailPage.querySelectorAll('.mjc-film-arrow'));
+                    let current = parseInt(carousel.getAttribute('data-current'), 10);
+
+                    if (Number.isNaN(current) || current < 0 || current >= items.length) {
+                        current = 0;
+                    }
+
+                    function showStill(index) {
+                        current = (index + items.length) % items.length;
+                        const item = items[current];
+
+                        if (!item || !item.image) {
+                            return;
+                        }
+
+                        image.classList.add('is-changing');
+
+                        window.setTimeout(function () {
+                            image.src = item.image;
+                            image.alt = (image.getAttribute('data-film-title') || 'Film') + ' still ' + item.number;
+
+                            dots.forEach(function (dot) {
+                                const dotIndex = parseInt(dot.getAttribute('data-carousel-index'), 10);
+                                const isActive = dotIndex === current;
+
+                                dot.classList.toggle('is-active', isActive);
+
+                                if (isActive) {
+                                    dot.setAttribute('aria-current', 'true');
+                                } else {
+                                    dot.removeAttribute('aria-current');
+                                }
+                            });
+
+                            carousel.setAttribute('data-current', String(current));
+                            image.classList.remove('is-changing');
+                        }, 120);
+                    }
+
+                    arrows.forEach(function (arrow) {
+                        arrow.addEventListener('click', function () {
+                            const direction = parseInt(arrow.getAttribute('data-carousel-direction'), 10) || 1;
+                            showStill(current + direction);
+                        });
+                    });
+
+                    dots.forEach(function (dot) {
+                        dot.addEventListener('click', function () {
+                            const index = parseInt(dot.getAttribute('data-carousel-index'), 10);
+
+                            if (!Number.isNaN(index)) {
+                                showStill(index);
+                            }
+                        });
+                    });
+                });
+            });
+        </script>
         <?php
     }
 
