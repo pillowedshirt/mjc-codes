@@ -776,12 +776,12 @@ JS;
 
         echo '<div class="mjc-contact-field-group">';
         echo '<label for="mjc_contact_email">Email:</label>';
-        echo '<input id="mjc_contact_email" type="email" name="mjc_email" required>';
+        echo '<input id="mjc_contact_email" type="email" name="mjc_email" placeholder="Email" required>';
         echo '</div>';
 
         echo '<div class="mjc-contact-field-group">';
         echo '<label for="mjc_contact_message">Message:</label>';
-        echo '<textarea id="mjc_contact_message" name="mjc_message" required></textarea>';
+        echo '<textarea id="mjc_contact_message" name="mjc_message" placeholder="Message" required></textarea>';
         echo '</div>';
 
         echo '<button class="mjc-contact-submit" type="submit">Submit</button>';
@@ -1496,9 +1496,16 @@ JS;
                 box-shadow: none;
             }
 
+            .mjc-contact-form input::placeholder,
+            .mjc-contact-form textarea::placeholder {
+                color: #95c2d8;
+                opacity: .72;
+            }
+
             .mjc-contact-form input:focus,
             .mjc-contact-form textarea:focus {
                 border-color: #95c2d8;
+                background: #fff;
                 box-shadow: 0 0 0 2px rgba(149, 194, 216, .25);
             }
 
@@ -1508,7 +1515,7 @@ JS;
             }
 
             .mjc-contact-submit {
-                justify-self: start;
+                justify-self: center;
                 border: 1px solid #95c2d8;
                 background: #95c2d8;
                 color: #fff !important;
@@ -1618,11 +1625,13 @@ JS;
                 align-items: center;
                 justify-content: center;
                 width: auto;
+                min-width: 0;
                 height: auto;
-                border: 0;
-                border-radius: 0;
-                background: transparent;
-                color: #fff;
+                min-height: 0;
+                border: 0 !important;
+                border-radius: 0 !important;
+                background: transparent !important;
+                color: #fff !important;
                 text-decoration: none;
                 font-size: 54px;
                 line-height: 1;
@@ -1631,7 +1640,12 @@ JS;
                 text-shadow: 0 4px 18px rgba(0,0,0,.55);
                 transition: transform .2s ease, opacity .2s ease, text-shadow .2s ease;
                 opacity: .92;
-                padding: 0;
+                padding: 0 !important;
+                margin: 0;
+                box-shadow: none !important;
+                outline: none;
+                appearance: none;
+                -webkit-appearance: none;
             }
 
             .mjc-home-carousel-control span {
@@ -1643,7 +1657,11 @@ JS;
             .mjc-home-carousel-control:focus {
                 transform: translateY(-50%) scale(1.14);
                 opacity: 1;
-                color: #fff;
+                color: #fff !important;
+                background: transparent !important;
+                border: 0 !important;
+                box-shadow: none !important;
+                outline: none;
                 text-shadow: 0 6px 22px rgba(0,0,0,.78);
             }
 
