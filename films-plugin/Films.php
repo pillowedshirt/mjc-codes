@@ -2,7 +2,7 @@
 /**
  * Plugin Name: MJC Films Portfolio
  * Description: Adds a cinematography film portfolio system with editable film details, ordered stills, a Work shortcode, dynamic film detail pages, and a homepage carousel.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: MJC
  */
 
@@ -15,6 +15,7 @@ class MJC_Films_Portfolio {
     const META_PREFIX = '_mjc_film_';
     const NONCE = 'mjc_film_details_nonce';
     const CAROUSEL_OPTION = 'mjc_homepage_carousel_stills';
+    const CONTACT_INBOX_OPTION = 'mjc_contact_destination_inbox';
 
     public function __construct() {
         add_action('init', [$this, 'register_post_type']);
@@ -25,6 +26,9 @@ class MJC_Films_Portfolio {
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_assets']);
         add_shortcode('mjc_films_work', [$this, 'render_work_shortcode']);
         add_shortcode('mjc_homepage_carousel', [$this, 'render_homepage_carousel_shortcode']);
+        add_shortcode('mjc_contact_form', [$this, 'render_contact_form_shortcode']);
+        add_action('admin_post_mjc_submit_contact_form', [$this, 'handle_contact_form_submission']);
+        add_action('admin_post_nopriv_mjc_submit_contact_form', [$this, 'handle_contact_form_submission']);
         add_action('template_redirect', [$this, 'render_single_template_if_needed']);
         add_filter('manage_' . self::CPT . '_posts_columns', [$this, 'add_admin_columns']);
         add_action('manage_' . self::CPT . '_posts_custom_column', [$this, 'render_admin_columns'], 10, 2);
@@ -74,6 +78,15 @@ class MJC_Films_Portfolio {
             'edit_posts',
             'mjc-homepage-carousel',
             [$this, 'render_homepage_carousel_admin_page']
+        );
+
+        add_submenu_page(
+            'edit.php?post_type=' . self::CPT,
+            'Contact Form',
+            'Contact Form',
+            'manage_options',
+            'mjc-contact-form',
+            [$this, 'render_contact_form_admin_page']
         );
     }
 
@@ -132,7 +145,7 @@ class MJC_Films_Portfolio {
     public function enqueue_admin_assets($hook) {
         global $post_type;
 
-        if ($post_type !== self::CPT && $hook !== self::CPT . '_page_mjc-homepage-carousel') {
+        if ($post_type !== self::CPT && $hook !== self::CPT . '_page_mjc-homepage-carousel' && $hook !== self::CPT . '_page_mjc-contact-form') {
             return;
         }
 
@@ -169,6 +182,9 @@ class MJC_Films_Portfolio {
             .mjc-carousel-choice label { display:flex; gap:8px; align-items:flex-start; margin-top:10px; font-weight:600; }
             .mjc-carousel-choice small { display:block; margin-top:5px; color:#666; font-weight:400; }
             .mjc-carousel-shortcode-box { display:inline-block; padding:10px 12px; background:#fff; border:1px solid #dcdcde; font-family:monospace; }
+            .mjc-contact-admin-card { max-width:720px; background:#fff; border:1px solid #dcdcde; padding:20px; margin-top:18px; }
+            .mjc-contact-admin-card label { display:block; font-weight:600; margin-bottom:8px; }
+            .mjc-contact-admin-card input[type="email"] { width:100%; max-width:520px; }
         ';
 
         wp_add_inline_style('wp-admin', $css);
@@ -642,6 +658,139 @@ JS;
         echo '</div>';
     }
 
+
+    public function render_contact_form_admin_page() {
+        if (!current_user_can('manage_options')) {
+            wp_die('You do not have permission to edit the contact form settings.');
+        }
+
+        if (isset($_POST['mjc_contact_form_nonce']) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['mjc_contact_form_nonce'])), 'mjc_save_contact_form_settings')) {
+            $destination = isset($_POST['mjc_contact_destination_inbox']) ? sanitize_email(wp_unslash($_POST['mjc_contact_destination_inbox'])) : '';
+
+            if ($destination && is_email($destination)) {
+                update_option(self::CONTACT_INBOX_OPTION, $destination, false);
+                echo '<div class="notice notice-success is-dismissible"><p>Contact form settings updated.</p></div>';
+            } else {
+                echo '<div class="notice notice-error is-dismissible"><p>Please enter a valid destination inbox email address.</p></div>';
+            }
+        }
+
+        $destination = $this->get_contact_destination_email();
+
+        echo '<div class="wrap">';
+        echo '<h1>Contact Form</h1>';
+        echo '<p>Set the destination inbox for contact form submissions. Add this shortcode to your Contact page:</p>';
+        echo '<p class="mjc-carousel-shortcode-box">[mjc_contact_form]</p>';
+        echo '<div class="mjc-contact-admin-card">';
+        echo '<form method="post">';
+
+        wp_nonce_field('mjc_save_contact_form_settings', 'mjc_contact_form_nonce');
+
+        echo '<label for="mjc_contact_destination_inbox">Destination Inbox</label>';
+        echo '<input id="mjc_contact_destination_inbox" type="email" name="mjc_contact_destination_inbox" value="' . esc_attr($destination) . '" placeholder="name@example.com" required>';
+        echo '<p class="description">All contact form submissions will be emailed to this inbox.</p>';
+
+        submit_button('Save Contact Form Settings');
+
+        echo '</form>';
+        echo '</div>';
+        echo '</div>';
+    }
+
+    private function get_contact_destination_email() {
+        $saved = get_option(self::CONTACT_INBOX_OPTION, '');
+
+        if ($saved && is_email($saved)) {
+            return $saved;
+        }
+
+        return get_option('admin_email');
+    }
+
+    public function handle_contact_form_submission() {
+        $redirect = isset($_POST['mjc_contact_redirect']) ? esc_url_raw(wp_unslash($_POST['mjc_contact_redirect'])) : home_url('/contact/');
+
+        if (!isset($_POST['mjc_contact_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['mjc_contact_nonce'])), 'mjc_submit_contact_form')) {
+            wp_safe_redirect(add_query_arg('mjc_contact_status', 'invalid', $redirect));
+            exit;
+        }
+
+        $first_name = isset($_POST['mjc_first_name']) ? sanitize_text_field(wp_unslash($_POST['mjc_first_name'])) : '';
+        $last_name = isset($_POST['mjc_last_name']) ? sanitize_text_field(wp_unslash($_POST['mjc_last_name'])) : '';
+        $email = isset($_POST['mjc_email']) ? sanitize_email(wp_unslash($_POST['mjc_email'])) : '';
+        $message = isset($_POST['mjc_message']) ? sanitize_textarea_field(wp_unslash($_POST['mjc_message'])) : '';
+
+        if ($first_name === '' || $last_name === '' || $email === '' || !is_email($email) || $message === '') {
+            wp_safe_redirect(add_query_arg('mjc_contact_status', 'missing', $redirect));
+            exit;
+        }
+
+        $to = $this->get_contact_destination_email();
+        $subject = 'New contact form message from ' . $first_name . ' ' . $last_name;
+        $body = "Name: {$first_name} {$last_name}\n";
+        $body .= "Email: {$email}\n\n";
+        $body .= "Message:\n{$message}\n";
+        $headers = [
+            'Content-Type: text/plain; charset=UTF-8',
+            'Reply-To: ' . $first_name . ' ' . $last_name . ' <' . $email . '>',
+        ];
+
+        $sent = wp_mail($to, $subject, $body, $headers);
+
+        wp_safe_redirect(add_query_arg('mjc_contact_status', $sent ? 'sent' : 'failed', $redirect));
+        exit;
+    }
+
+    public function render_contact_form_shortcode($atts) {
+        ob_start();
+
+        $this->print_frontend_styles();
+
+        $status = isset($_GET['mjc_contact_status']) ? sanitize_key(wp_unslash($_GET['mjc_contact_status'])) : '';
+
+        echo '<section class="mjc-contact-form-wrap">';
+
+        if ($status === 'sent') {
+            echo '<p class="mjc-contact-status">Thank you. Your message has been sent.</p>';
+        } elseif ($status === 'missing') {
+            echo '<p class="mjc-contact-status">Please complete every required field with a valid email address.</p>';
+        } elseif ($status === 'failed') {
+            echo '<p class="mjc-contact-status">The message could not be sent. Please try again.</p>';
+        } elseif ($status === 'invalid') {
+            echo '<p class="mjc-contact-status">The form expired. Please refresh the page and try again.</p>';
+        }
+
+        echo '<form class="mjc-contact-form" method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+        echo '<input type="hidden" name="action" value="mjc_submit_contact_form">';
+        echo '<input type="hidden" name="mjc_contact_redirect" value="' . esc_url(get_permalink()) . '">';
+
+        wp_nonce_field('mjc_submit_contact_form', 'mjc_contact_nonce');
+
+        echo '<div class="mjc-contact-field-group">';
+        echo '<label>Name:</label>';
+        echo '<div class="mjc-contact-name-fields">';
+        echo '<div><input type="text" name="mjc_first_name" placeholder="First" required></div>';
+        echo '<div><input type="text" name="mjc_last_name" placeholder="Last" required></div>';
+        echo '</div>';
+        echo '</div>';
+
+        echo '<div class="mjc-contact-field-group">';
+        echo '<label for="mjc_contact_email">Email:</label>';
+        echo '<input id="mjc_contact_email" type="email" name="mjc_email" required>';
+        echo '</div>';
+
+        echo '<div class="mjc-contact-field-group">';
+        echo '<label for="mjc_contact_message">Message:</label>';
+        echo '<textarea id="mjc_contact_message" name="mjc_message" required></textarea>';
+        echo '</div>';
+
+        echo '<button class="mjc-contact-submit" type="submit">Submit</button>';
+        echo '</form>';
+        echo '</section>';
+
+        return ob_get_clean();
+    }
+
     public function render_work_shortcode($atts) {
         $films = new WP_Query([
             'post_type' => self::CPT,
@@ -753,8 +902,8 @@ JS;
         }
 
         if (count($items) > 1) {
-            echo '<button class="mjc-home-carousel-control mjc-home-carousel-prev" type="button" aria-label="Previous carousel image">&#10094;</button>';
-            echo '<button class="mjc-home-carousel-control mjc-home-carousel-next" type="button" aria-label="Next carousel image">&#10095;</button>';
+            echo '<button class="mjc-home-carousel-control mjc-home-carousel-prev" type="button" aria-label="Previous carousel image"><span>&#10094;</span></button>';
+            echo '<button class="mjc-home-carousel-control mjc-home-carousel-next" type="button" aria-label="Next carousel image"><span>&#10095;</span></button>';
         }
 
         echo '</div>';
@@ -867,12 +1016,6 @@ JS;
         $selected_id = isset($stills[$selected_index]) ? $stills[$selected_index] : 0;
         $selected_image = $selected_id ? wp_get_attachment_image_url($selected_id, 'large') : '';
 
-        $previous_still = $selected <= 1 ? count($stills) : $selected - 1;
-        $next_still = $selected >= count($stills) ? 1 : $selected + 1;
-
-        $previous_url = add_query_arg('still', $previous_still, get_permalink($film_id));
-        $next_url = add_query_arg('still', $next_still, get_permalink($film_id));
-
         echo '<main class="mjc-film-detail-page">';
 
         echo '<a class="mjc-film-back-button" href="' . esc_url($plugin->get_work_page_url()) . '" aria-label="Back to Work page"><span class="mjc-film-back-arrow">&#8592;</span><span class="mjc-film-back-text">More Films</span></a>';
@@ -882,25 +1025,41 @@ JS;
         echo '<section class="mjc-film-detail-media">';
 
         if ($selected_image) {
-            echo '<div class="mjc-film-detail-image-wrap">';
-            echo '<img src="' . esc_url($selected_image) . '" alt="' . esc_attr(get_the_title($film_id)) . ' still">';
+            $carousel_data = [];
 
-            if (count($stills) > 1) {
-                echo '<a class="mjc-film-arrow mjc-film-arrow-left" href="' . esc_url($previous_url) . '" aria-label="Previous still"><span>&#10094;</span></a>';
-                echo '<a class="mjc-film-arrow mjc-film-arrow-right" href="' . esc_url($next_url) . '" aria-label="Next still"><span>&#10095;</span></a>';
+            foreach ($stills as $index => $still_id) {
+                $large_url = wp_get_attachment_image_url($still_id, 'large');
+
+                if (!$large_url) {
+                    continue;
+                }
+
+                $carousel_data[] = [
+                    'index' => $index,
+                    'number' => $index + 1,
+                    'image' => $large_url,
+                    'url' => add_query_arg('still', $index + 1, get_permalink($film_id)),
+                ];
             }
 
+            echo '<div class="mjc-film-detail-image-wrap" data-mjc-film-carousel data-current="' . esc_attr($selected_index) . '">';
+            echo '<img class="mjc-film-carousel-image" src="' . esc_url($selected_image) . '" alt="' . esc_attr(get_the_title($film_id)) . ' still" data-film-title="' . esc_attr(get_the_title($film_id)) . '">';
+
+            if (count($carousel_data) > 1) {
+                echo '<button class="mjc-film-arrow mjc-film-arrow-left" type="button" data-carousel-direction="-1" aria-label="Previous still"><span>&#10094;</span></button>';
+                echo '<button class="mjc-film-arrow mjc-film-arrow-right" type="button" data-carousel-direction="1" aria-label="Next still"><span>&#10095;</span></button>';
+            }
+
+            echo '<script type="application/json" class="mjc-film-carousel-data">' . wp_json_encode($carousel_data) . '</script>';
             echo '</div>';
 
-            if (count($stills) > 1) {
+            if (count($carousel_data) > 1) {
                 echo '<nav class="mjc-film-dots" aria-label="Film still carousel position">';
 
-                foreach ($stills as $index => $still_id) {
-                    $dot_number = $index + 1;
-                    $dot_url = add_query_arg('still', $dot_number, get_permalink($film_id));
-                    $active = $dot_number === $selected;
+                foreach ($carousel_data as $item) {
+                    $active = (int) $item['index'] === (int) $selected_index;
 
-                    echo '<a class="mjc-film-dot ' . ($active ? 'is-active' : '') . '" href="' . esc_url($dot_url) . '" aria-label="View still ' . esc_attr($dot_number) . ' of ' . esc_attr(count($stills)) . '" ' . ($active ? 'aria-current="true"' : '') . '></a>';
+                    echo '<button class="mjc-film-dot ' . ($active ? 'is-active' : '') . '" type="button" data-carousel-index="' . esc_attr($item['index']) . '" aria-label="View still ' . esc_attr($item['number']) . ' of ' . esc_attr(count($carousel_data)) . '" ' . ($active ? 'aria-current="true"' : '') . '></button>';
                 }
 
                 echo '</nav>';
@@ -1291,6 +1450,88 @@ JS;
                 opacity: .78;
             }
 
+
+
+            .mjc-contact-form-wrap {
+                width: min(760px, calc(100% - 40px));
+                margin: 0 auto;
+                color: #95c2d8;
+                font-family: inherit;
+            }
+
+            .mjc-contact-form-wrap *,
+            .mjc-contact-form-wrap label,
+            .mjc-contact-form-wrap p,
+            .mjc-contact-form-wrap .mjc-contact-status {
+                color: #95c2d8;
+                font-family: inherit;
+            }
+
+            .mjc-contact-form {
+                display: grid;
+                gap: 18px;
+            }
+
+            .mjc-contact-name-fields {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 14px;
+            }
+
+            .mjc-contact-form label {
+                display: block;
+                font-weight: 700;
+                margin: 0 0 7px;
+            }
+
+            .mjc-contact-form input,
+            .mjc-contact-form textarea {
+                width: 100%;
+                border: 1px solid #95c2d8;
+                background: transparent;
+                color: #95c2d8;
+                padding: 12px 13px;
+                font: inherit;
+                outline: none;
+                box-shadow: none;
+            }
+
+            .mjc-contact-form input:focus,
+            .mjc-contact-form textarea:focus {
+                border-color: #95c2d8;
+                box-shadow: 0 0 0 2px rgba(149, 194, 216, .25);
+            }
+
+            .mjc-contact-form textarea {
+                min-height: 160px;
+                resize: vertical;
+            }
+
+            .mjc-contact-submit {
+                justify-self: start;
+                border: 1px solid #95c2d8;
+                background: #95c2d8;
+                color: #fff !important;
+                padding: 12px 22px;
+                font: inherit;
+                font-weight: 700;
+                letter-spacing: .05em;
+                text-transform: uppercase;
+                cursor: pointer;
+                transition: transform .2s ease, opacity .2s ease;
+            }
+
+            .mjc-contact-submit:hover,
+            .mjc-contact-submit:focus {
+                transform: translateY(-2px);
+                opacity: .86;
+            }
+
+            .mjc-contact-status {
+                margin: 0 0 18px;
+                font-weight: 700;
+            }
+
             .mjc-film-no-image {
                 background: rgba(0,0,0,.04);
                 padding: 60px 20px;
@@ -1373,22 +1614,37 @@ JS;
                 top: 50%;
                 z-index: 3;
                 transform: translateY(-50%);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: auto;
+                height: auto;
                 border: 0;
+                border-radius: 0;
                 background: transparent;
                 color: #fff;
-                font-size: 48px;
-                font-weight: 900;
+                text-decoration: none;
+                font-size: 54px;
                 line-height: 1;
+                font-weight: 900;
                 cursor: pointer;
                 text-shadow: 0 4px 18px rgba(0,0,0,.55);
-                transition: transform .2s ease, opacity .2s ease;
-                opacity: .9;
+                transition: transform .2s ease, opacity .2s ease, text-shadow .2s ease;
+                opacity: .92;
+                padding: 0;
+            }
+
+            .mjc-home-carousel-control span {
+                display: block;
+                transform: scaleX(1.28);
             }
 
             .mjc-home-carousel-control:hover,
             .mjc-home-carousel-control:focus {
                 transform: translateY(-50%) scale(1.14);
                 opacity: 1;
+                color: #fff;
+                text-shadow: 0 6px 22px rgba(0,0,0,.78);
             }
 
             .mjc-home-carousel-prev {
@@ -1457,8 +1713,113 @@ JS;
                 .mjc-home-carousel-meta {
                     text-align: left;
                 }
+
+                .mjc-contact-name-fields {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .mjc-film-arrow {
+                cursor: pointer;
+            }
+
+            .mjc-film-dot {
+                cursor: pointer;
+                appearance: none;
+                -webkit-appearance: none;
+                padding: 0;
+            }
+
+            .mjc-film-carousel-image {
+                transition: opacity .18s ease;
+            }
+
+            .mjc-film-carousel-image.is-changing {
+                opacity: .55;
             }
         </style>
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                document.querySelectorAll('[data-mjc-film-carousel]').forEach(function (carousel) {
+                    const image = carousel.querySelector('.mjc-film-carousel-image');
+                    const dataNode = carousel.querySelector('.mjc-film-carousel-data');
+                    const detailPage = carousel.closest('.mjc-film-detail-page');
+
+                    if (!image || !dataNode || !detailPage) {
+                        return;
+                    }
+
+                    let items = [];
+
+                    try {
+                        items = JSON.parse(dataNode.textContent || '[]');
+                    } catch (error) {
+                        items = [];
+                    }
+
+                    if (!items.length) {
+                        return;
+                    }
+
+                    const dots = Array.from(detailPage.querySelectorAll('.mjc-film-dot'));
+                    const arrows = Array.from(detailPage.querySelectorAll('.mjc-film-arrow'));
+                    let current = parseInt(carousel.getAttribute('data-current'), 10);
+
+                    if (Number.isNaN(current) || current < 0 || current >= items.length) {
+                        current = 0;
+                    }
+
+                    function showStill(index) {
+                        current = (index + items.length) % items.length;
+                        const item = items[current];
+
+                        if (!item || !item.image) {
+                            return;
+                        }
+
+                        image.classList.add('is-changing');
+
+                        window.setTimeout(function () {
+                            image.src = item.image;
+                            image.alt = (image.getAttribute('data-film-title') || 'Film') + ' still ' + item.number;
+
+                            dots.forEach(function (dot) {
+                                const dotIndex = parseInt(dot.getAttribute('data-carousel-index'), 10);
+                                const isActive = dotIndex === current;
+
+                                dot.classList.toggle('is-active', isActive);
+
+                                if (isActive) {
+                                    dot.setAttribute('aria-current', 'true');
+                                } else {
+                                    dot.removeAttribute('aria-current');
+                                }
+                            });
+
+                            carousel.setAttribute('data-current', String(current));
+                            image.classList.remove('is-changing');
+                        }, 120);
+                    }
+
+                    arrows.forEach(function (arrow) {
+                        arrow.addEventListener('click', function () {
+                            const direction = parseInt(arrow.getAttribute('data-carousel-direction'), 10) || 1;
+                            showStill(current + direction);
+                        });
+                    });
+
+                    dots.forEach(function (dot) {
+                        dot.addEventListener('click', function () {
+                            const index = parseInt(dot.getAttribute('data-carousel-index'), 10);
+
+                            if (!Number.isNaN(index)) {
+                                showStill(index);
+                            }
+                        });
+                    });
+                });
+            });
+        </script>
         <?php
     }
 
